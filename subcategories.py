@@ -71,20 +71,44 @@ async def read_subcategories(
     user_id: str, 
     current_user: str = Depends(get_current_user)
 ):
+    print(f"\n=== Fetching Categories ===")
+    print(f"User ID: {user_id}")
+    print(f"Current user: {current_user}")
+    
     if user_id != current_user:
-        raise HTTPException(status_code=403, detail="Can only view your own subcategories")
+        raise HTTPException(status_code=403, detail="Can only view your own categories")
     
     try:
-        # Get subcategories with their budgets using a join
-        response = supabase.rpc('get_subcategories_with_budgets', {
-            'p_user_id': user_id
-        }).execute()
+        # Get both standard categories and user's custom categories
+        response = supabase.from_('subcategories').select('*').or_(
+            f'is_standard.eq.true,user_id.eq.{user_id}'
+        ).execute()
         
-        print(f"Retrieved subcategories with budgets: {response.data}")
-        return response.data
+        print(f"Found categories: {response.data}")
+        
+        # Format the response
+        categories = []
+        for category in response.data:
+            formatted_category = {
+                "subcategory_id": category["subcategory_id"],
+                "category": category["category"],
+                "subcategory_name": category["subcategory_name"],
+                "is_standard": category["is_standard"],
+                "budget": category.get("budget"),
+                "user_id": category.get("user_id")
+            }
+            categories.append(formatted_category)
+        
+        return categories
+
     except Exception as e:
-        print(f"Error fetching subcategories: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        print(f"\n=== Error Details ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to fetch categories: {str(e)}"
+        )
 
 @router.get("/{user_id}/{subcategory_id}")
 async def read_subcategory(
@@ -208,4 +232,3 @@ async def delete_subcategory(
                 detail="Cannot delete subcategory because it is being used in transactions"
             )
         raise HTTPException(status_code=400, detail=str(e))
-

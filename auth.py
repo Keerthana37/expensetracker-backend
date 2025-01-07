@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from typing import Optional
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -13,6 +14,9 @@ SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmF
 # Initialize two Supabase clients
 admin_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)  # For admin operations
 auth_client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)      # For auth operations
+
+# Initialize OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -55,14 +59,15 @@ async def login(user: UserLogin):
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-async def get_current_user(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header missing")
-    
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    print(f"Verifying token in get_current_user: {token[:20]}...")  # Debug log
     try:
-        # Use auth client for token verification
-        token = authorization.split(" ")[1]
         user = auth_client.auth.get_user(token)
+        print(f"User verified: {user.user.id}")  # Debug log
         return user.user.id
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid authentication credentials") 
+        print(f"Token verification failed: {str(e)}")  # Debug log
+        raise HTTPException(
+            status_code=401,
+            detail=f"Authentication failed: {str(e)}"
+        ) 

@@ -67,34 +67,73 @@ async def read_user_transactions(
     user_id: str, 
     current_user: str = Depends(get_current_user)
 ):
-    if user_id != current_user:
-        raise HTTPException(status_code=403, detail="Can only view your own transactions")
+    print("\n=== Transaction Request ===")
+    print(f"Requested user_id: {user_id}")
+    print(f"Authenticated user: {current_user}")
     
     try:
-        response = supabase.table("transaction_details").select("*").eq("user_id", user_id).execute()
-        return response.data
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # First check subcategories table
+        print("\n=== Subcategories Check ===")
+        sub_query = supabase.from_('subcategories').select('*').execute()
+        print(f"All subcategories: {sub_query.data}")
 
-@router.get("/{user_id}/{transaction_id}")
-async def read_transaction(
-    user_id: str,
-    transaction_id: int, 
-    current_user: str = Depends(get_current_user)
-):
-    if user_id != current_user:
-        raise HTTPException(status_code=403, detail="Can only view your own transactions")
-    
-    try:
-        response = supabase.table("transaction_details").select("*").eq(
-            "transaction_id", transaction_id
-        ).eq("user_id", user_id).execute()
+        # Then check specific subcategories
+        print("\n=== Specific Subcategories Check ===")
+        specific_subs = supabase.from_('subcategories').select('*').in_('subcategory_id', [13, 15]).execute()
+        print(f"Specific subcategories (13, 15): {specific_subs.data}")
+
+        # Get transactions with join
+        print("\n=== Transaction Query ===")
+        query = """
+            *,
+            subcategories!inner (
+                subcategory_id,
+                category,
+                subcategory_name
+            )
+        """
+        print(f"Query string: {query}")
         
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-        return response.data[0]
+        response = supabase.from_('transaction_details').select(query).eq('user_id', user_id).execute()
+        print(f"Raw transaction response: {response.data}")
+
+        # Format response
+        formatted_transactions = []
+        for transaction in response.data:
+            print(f"\nProcessing transaction: {transaction}")
+            subcategory = next(
+                (sub for sub in specific_subs.data if sub['subcategory_id'] == transaction['subcategory_id']), 
+                None
+            )
+            print(f"Found subcategory: {subcategory}")
+
+            formatted_transaction = {
+                "transaction_id": transaction["transaction_id"],
+                "date_of_transaction": transaction["date_of_transaction"],
+                "amount_incurred": transaction["amount_incurred"],
+                "transaction_name": transaction["transaction_name"],
+                "user_id": transaction["user_id"],
+                "subcategory_id": transaction["subcategory_id"],
+                "category": subcategory["category"] if subcategory else None,
+                "subcategory_name": subcategory["subcategory_name"] if subcategory else None
+            }
+            formatted_transactions.append(formatted_transaction)
+
+        print("\n=== Final Response ===")
+        print(f"Formatted transactions: {formatted_transactions}")
+        return formatted_transactions
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        print("\n=== Error Details ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        print(f"=== End Error Details ===\n")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Failed to fetch transactions: {str(e)}"
+        )
+
+
 
 @router.put("/{user_id}/{transaction_id}")
 async def update_transaction(

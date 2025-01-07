@@ -29,5 +29,5 @@ app.include_router(transactions_router)
 app.include_router(subcategories_router)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002) 
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
 
