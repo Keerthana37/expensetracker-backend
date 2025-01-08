@@ -20,10 +20,9 @@ class SubcategoryBase(BaseModel):
 class SubcategoryCreate(SubcategoryBase):
     pass
 
-class SubcategoryUpdate(SubcategoryBase):
-    category: Optional[str] = None
-    subcategory_name: Optional[str] = None
-    budget: Optional[float] = None
+class SubcategoryUpdate(BaseModel):
+    category: str
+    subcategory_name: str
 
 class Subcategory(SubcategoryBase):
     subcategory_id: int
@@ -142,59 +141,47 @@ async def update_subcategory(
     subcategory: SubcategoryUpdate,
     current_user: str = Depends(get_current_user)
 ):
+    print(f"\n=== Update Subcategory ===")
+    print(f"User ID: {user_id}")
+    print(f"Subcategory ID: {subcategory_id}")
+    print(f"Update data: {subcategory.model_dump()}")
+    
     if user_id != current_user:
         raise HTTPException(status_code=403, detail="Can only update your own subcategories")
     
     try:
-        # First verify subcategory exists
-        existing = supabase.table("subcategories").select("*").eq(
-            "subcategory_id", subcategory_id
+        # First verify subcategory exists and belongs to user
+        existing = supabase.from_('subcategories').select('*').eq(
+            'subcategory_id', subcategory_id
         ).execute()
         
         if not existing.data:
             raise HTTPException(status_code=404, detail="Subcategory not found")
-
-        # Handle budget update in subcategory_budgets table
-        if subcategory.budget is not None:
-            try:
-                budget_value = float(subcategory.budget)
-                print(f"Processing budget update: {budget_value}")
-
-                # First try to update existing budget
-                budget_response = supabase.table("subcategory_budgets").update({
-                    "budget": budget_value
-                }).eq("user_id", user_id).eq(
-                    "subcategory_id", subcategory_id
-                ).execute()
-
-                # If no existing budget, create new entry
-                if not budget_response.data:
-                    print("Creating new budget entry")
-                    budget_response = supabase.table("subcategory_budgets").insert({
-                        "user_id": user_id,
-                        "subcategory_id": subcategory_id,
-                        "budget": budget_value
-                    }).execute()
-
-                print(f"Budget operation response: {budget_response.data}")
-            except Exception as budget_error:
-                print(f"Budget update error: {str(budget_error)}")
-                raise HTTPException(status_code=400, detail=f"Budget update failed: {str(budget_error)}")
-
-        # Verify the budget was stored
-        budget_verification = supabase.table("subcategory_budgets").select("budget").eq(
-            "user_id", user_id
-        ).eq("subcategory_id", subcategory_id).execute()
-        
-        print(f"Budget verification: {budget_verification.data}")
-
-        return {
-            "message": "Update successful",
-            "budget_stored": budget_verification.data[0] if budget_verification.data else None
-        }
             
+        if existing.data[0]['is_standard']:
+            raise HTTPException(status_code=403, detail="Cannot modify standard subcategories")
+            
+        if existing.data[0]['user_id'] != user_id:
+            raise HTTPException(status_code=403, detail="Can only update your own subcategories")
+
+        # Update subcategory
+        response = supabase.from_('subcategories').update({
+            'category': subcategory.category,
+            'subcategory_name': subcategory.subcategory_name
+        }).eq('subcategory_id', subcategory_id).eq('user_id', user_id).execute()
+        
+        # Format response
+        formatted_response = {
+            "category": response.data[0]["category"],
+            "subcategory_name": response.data[0]["subcategory_name"],
+            "subcategory_id": response.data[0]["subcategory_id"]
+        }
+        
+        print(f"Updated subcategory: {formatted_response}")
+        return formatted_response
+
     except Exception as e:
-        print(f"Update error: {str(e)}")
+        print(f"Error updating subcategory: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete("/{user_id}/{subcategory_id}")
