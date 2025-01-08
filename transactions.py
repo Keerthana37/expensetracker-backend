@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 from auth import get_current_user
+import re
 
 # Initialize Router
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -17,7 +18,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 class TransactionCreate(BaseModel):
     category: str
     sub_category: str
-    date_of_transaction: str
+    date_of_transaction: str  # Format: "MM-DD"
     amount_incurred: str
     transaction_name: str
 
@@ -43,6 +44,13 @@ async def create_transaction(
         raise HTTPException(status_code=403, detail="Can only create transactions for yourself")
     
     try:
+        # Validate date format (MM-DD)
+        if not re.match(r'^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$', transaction.date_of_transaction):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid date format. Use MM-DD (e.g., 03-20)"
+            )
+
         # First find the subcategory_id from subcategories table
         subcategory_check = supabase.from_('subcategories').select('subcategory_id').eq(
             'category', transaction.category
@@ -236,4 +244,75 @@ async def delete_transaction(
             raise HTTPException(status_code=404, detail="Transaction not found")
         return {"message": "Transaction deleted successfully"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) 
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/{user_id}/expenses/{year}/{month}")
+async def get_expenses_by_month(
+    user_id: str,
+    year: str,
+    month: str,
+    current_user: str = Depends(get_current_user)
+):
+    print(f"\n=== Fetch Monthly Expenses ===")
+    print(f"User ID: {user_id}")
+    print(f"Year: {year}")
+    print(f"Month: {month}")
+    
+    if user_id != current_user:
+        raise HTTPException(status_code=403, detail="Can only view your own expenses")
+    
+    try:
+        # Format month to ensure two digits
+        month = month.zfill(2)  # e.g., "3" becomes "03"
+        
+        # Get transactions for the month
+        response = supabase.from_('transaction_details').select('*').eq(
+            'user_id', user_id
+        ).like(
+            'date_of_transaction', f'{year}-{month}-%'
+        ).execute()
+
+        print(f"Query: date_of_transaction LIKE '{year}-{month}-%'")
+        print(f"Found transactions: {response.data}")
+
+        if not response.data:
+            return []
+
+        # Group and sum by subcategory_id
+        expenses_by_subcategory = {}
+        for transaction in response.data:
+            subcategory_id = transaction['subcategory_id']
+            amount = float(transaction['amount_incurred'])
+            
+            if subcategory_id in expenses_by_subcategory:
+                expenses_by_subcategory[subcategory_id] += amount
+            else:
+                expenses_by_subcategory[subcategory_id] = amount
+
+        print(f"\nGrouped by subcategory: {expenses_by_subcategory}")
+
+        # Get subcategory names and format response
+        expenses = []
+        for subcategory_id, total_amount in expenses_by_subcategory.items():
+            subcategory = supabase.from_('subcategories').select(
+                'subcategory_name, category'
+            ).eq('subcategory_id', subcategory_id).single().execute()
+
+            print(f"\nSubcategory details for ID {subcategory_id}: {subcategory.data}")
+
+            expenses.append({
+                "subcategory_id": subcategory_id,
+                "subcategory_name": subcategory.data['subcategory_name'],
+                "total_amount": round(total_amount, 2)
+            })
+
+        # Sort by subcategory_name
+        expenses.sort(key=lambda x: x['subcategory_name'])
+        return expenses
+
+    except Exception as e:
+        print(f"Error fetching expenses: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to fetch expenses: {str(e)}"
+        )
